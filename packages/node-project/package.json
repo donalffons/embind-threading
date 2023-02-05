@@ -2,9 +2,10 @@
   "name": "node-project",
   "version": "0.0.0",
   "dependencies": {
-    "emscripten-project": "workspace:^0.0.0",
+    "emscripten-project": "workspace:*",
+    "lock": "workspace:*",
     "tslib": "^2.5.0",
-    "worker-project": "workspace:^0.0.0"
+    "worker-project": "workspace:*"
   },
   "type": "module"
 }

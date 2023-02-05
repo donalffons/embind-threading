@@ -2,57 +2,56 @@
 #include <emscripten/bind.h>
 #include <iostream>
 using namespace emscripten;
+#include <atomic>
 #include <functional>
 #include <pthread.h>
+#include <string>
 #include <thread>
 #include <typeinfo>
 
 pthread_t threadId;
 
-struct RunInThreadResult {
-  int *lock;
-  std::string result;
-};
+class MyThread;
 
 struct ThreadFuncArgs {
-  RunInThreadResult res;
   std::string msg;
+  MyThread *thread;
 };
+
+EM_ASYNC_JS(void, jsThreadFunc, (EM_VAL val_handle, long threadMemAddress), {
+  globalThis.thread = Module.MyThread.fromMemAddress(threadMemAddress);
+  importScripts(Emval.toValue(val_handle));
+  await runThread();
+});
 
 void *threadFunc(void *arg) {
   ThreadFuncArgs *tfArgs = static_cast<ThreadFuncArgs *>(arg);
-  emscripten_run_script(tfArgs->msg.c_str());
-  emscripten_run_script(
-      (std::string(";console.log(\"finished\"); Atomics.notify(HEAP32, ") +
-       std::to_string(reinterpret_cast<long>(tfArgs->res.lock) / 4) + ");")
-          .c_str());
-  delete tfArgs->res.lock;
+  jsThreadFunc(emscripten::val(tfArgs->msg).as_handle(),
+               reinterpret_cast<long>(tfArgs->thread));
   delete tfArgs;
-  return NULL;
+  std::cout << "-- THREAD EXIT --" << std::endl;
+  return nullptr;
 }
 
-RunInThreadResult runInThread(std::string msg) {
-  RunInThreadResult res({new int(0), ""});
-  int err = pthread_create(&threadId, NULL, &threadFunc,
-                           new ThreadFuncArgs({res, msg}));
-  err = pthread_detach(threadId);
-  return res;
+void runInThread(std::string msg) {
+  ThreadFuncArgs *args = new ThreadFuncArgs({msg});
+  std::thread t(threadFunc, args);
+  t.detach();
 }
 
 void runOnMainThread(std::string msg) { emscripten_run_script(msg.c_str()); }
 
-class Blubb {
-public:
-  Blubb() {}
-};
-
 struct MyThread {
 public:
-  MyThread() : invocationLock(0), finalizationLock(0) {}
-  int invocationLock;
-  int finalizationLock;
+  MyThread() : lock(0) {}
+  void load(std::string url) {
+    ThreadFuncArgs *args = new ThreadFuncArgs({url, this});
+    std::thread t(threadFunc, args);
+    t.detach();
+  }
+  int lock;
   std::string arg;
-  std::string res;
+  std::string ret;
   static MyThread *fromMemAddress(long address) {
     return static_cast<MyThread *>(reinterpret_cast<MyThread *>(address));
   }
@@ -61,29 +60,16 @@ public:
 EMSCRIPTEN_BINDINGS(OCJS) {
   function("runInThread", &runInThread);
   function("runOnMainThread", &runOnMainThread);
-  class_<RunInThreadResult>("RunInThreadResult")
-      .smart_ptr_constructor(
-          "std::shared<RunInThreadResult>", optional_override([]() {
-            return std::shared_ptr<RunInThreadResult>(new RunInThreadResult());
-          }))
-      .function("getLock", std::function<long(RunInThreadResult &)>(
-                               [](RunInThreadResult &that) -> long {
-                                 return reinterpret_cast<long>(that.lock);
-                               }))
-      .property("result", &RunInThreadResult::result);
-  class_<Blubb>("Blubb").constructor();
   class_<MyThread>("MyThread")
-      .constructor()
-      .function("getInvocationLockAddress",
+      .constructor<>()
+      .function("load", &MyThread::load)
+      .function("getLockAddress",
                 std::function<long(MyThread &)>([](MyThread &that) -> long {
-                  return reinterpret_cast<long>(&that.invocationLock) / 4;
+                  return reinterpret_cast<long>(&that.lock);
                 }))
-      .function("getFinalizationLockAddress",
-                std::function<long(MyThread &)>([](MyThread &that) -> long {
-                  return reinterpret_cast<long>(&that.finalizationLock) / 4;
-                }))
+      .property("lock", &MyThread::lock)
       .property("arg", &MyThread::arg)
-      .property("res", &MyThread::res)
+      .property("ret", &MyThread::ret)
       .class_function("fromMemAddress", &MyThread::fromMemAddress,
                       allow_raw_pointers());
 }
