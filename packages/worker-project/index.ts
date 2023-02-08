@@ -1,11 +1,15 @@
-let i: any;
+let i = 0;
 
-export default async function (Module: any, arg: string) {
-  if (i === undefined) {
-    i = new Module.MyThread();
+declare const Module: any;
+
+async function myThreadFunction(arg: string) {
+  console.log(performance.now(), "Hello from thread, waiting", arg, i++);
+  await new Promise(res => setTimeout(res, 1000));
+  console.log(performance.now(), "Let's go");
+  for (let i = 0; i < 1000000;
+    i++) { // reducing the loop count makes the error go away
+    // (presumably, because it avoids memory growth?!)
+    Module.performWork();
   }
-  console.log("-- running code in thread: ", Date.now());
-  await new Promise(res => setTimeout(res, 500));
-  console.log("-- done in thread ", Date.now());
-  return Math.random().toString();
+  return "42";
 }

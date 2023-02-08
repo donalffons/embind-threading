@@ -3,8 +3,7 @@
   "version": "0.0.0",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && node postbuild",
-    "postbuild": "node postbuild.js"
+    "build": "tsc "
   },
   "devDependencies": {
     "typescript": "^4.9.5"

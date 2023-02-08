@@ -29,7 +29,7 @@ long performWork() {
 EM_JS(void, loadThread, (long threadMemAddress), {
   const thread = Module.MyThread.fromMemAddress(threadMemAddress);
   globalThis.thread = thread;
-  importScripts("thread.js");
+  importScripts(thread.url);
   console.log(performance.now(), "Hello from thread");
   globalThis.waitForRequest = function() {
     return new Promise(function(res) {
@@ -84,6 +84,7 @@ public:
   std::string runName;
   std::string runArg;
   std::string runRet;
+  std::string url;
   static MyThread *fromMemAddress(long address) {
     return static_cast<MyThread *>(reinterpret_cast<MyThread *>(address));
   }
@@ -111,6 +112,7 @@ EMSCRIPTEN_BINDINGS(OCJS) {
       .property("runName", &MyThread::runName)
       .property("runArg", &MyThread::runArg)
       .property("runRet", &MyThread::runRet)
+      .property("url", &MyThread::url)
       .class_function("fromMemAddress", &MyThread::fromMemAddress,
                       allow_raw_pointers());
 }
