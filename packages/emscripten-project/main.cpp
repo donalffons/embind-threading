@@ -21,91 +21,93 @@ struct ThreadFuncArgs {
   MyThread *thread;
 };
 
-EM_JS(void, loadThread, (EM_VAL val_handle, long threadMemAddress), {
+void performWork() { int *i = new int; }
+
+EM_JS(void, loadThread, (long threadMemAddress), {
   const thread = Module.MyThread.fromMemAddress(threadMemAddress);
   globalThis.thread = thread;
-  importScripts(Emval.toValue(val_handle));
-  let state = 1;
-  Atomics.store(Module.HEAP32, thread.getAliveAddress() / 4, 1);
-  Atomics.notify(Module.HEAP32, thread.getAliveAddress() / 4);
-  do {
-    Atomics.wait(Module.HEAP32, thread.getAliveAddress() / 4, 1);
-    state = Atomics.load(Module.HEAP32, thread.getAliveAddress() / 4);
-    if (state == 2) {
-      console.log(Date.now(), "run function", thread.runName);
-      globalThis[thread.runName]();
-      thread.runName = "";
-      Atomics.store(Module.HEAP32, thread.getAliveAddress() / 4, 1);
-      Atomics.notify(Module.HEAP32, thread.getAliveAddress() / 4);
+  importScripts("thread.js");
+  console.log(performance.now(), "Hello from thread");
+  globalThis.waitForRequest = function() {
+    return new Promise(function(res) {
+      Atomics.waitAsync(Module.HEAP32, thread.getRequestAddress() / 4, 0)
+          .value.then(function(){res(thread.request)});
+      thread.state = 1;
+      Atomics.notify(Module.HEAP32, thread.getStateAddress() / 4);
+    });
+  };
+  globalThis.requestHandler = async function() {
+    console.log(performance.now(), "Thread waiting for request");
+    await waitForRequest();
+    console.log(performance.now(), "thread received request", thread.request);
+    if (thread.request == -1) {
+      console.log(performance.now(), "exiting thread");
+      thread.state = -1;
+      Atomics.notify(Module.HEAP32, thread.getStateAddress() / 4);
+    } else {
+      console.log(performance.now(), "executing function");
+      globalThis[thread.runName](thread.runArg).then(function(res) {
+        thread.runName = "";
+        thread.runArg = "";
+        thread.runRet = res;
+        setTimeout(
+            function() { requestHandler(); }, 0);
+      });
     }
-  } while (state != -1);
+    thread.request = 0;
+  };
+  requestHandler();
 });
 
 void *threadFunc(void *arg) {
-  ThreadFuncArgs *tfArgs = static_cast<ThreadFuncArgs *>(arg);
-  loadThread(emscripten::val(tfArgs->msg).as_handle(),
-             reinterpret_cast<long>(tfArgs->thread));
-  delete tfArgs;
-  std::cout << "-- THREAD EXIT --" << std::endl;
+  loadThread(reinterpret_cast<long>(arg));
   return nullptr;
 }
 
-void runInThread(std::string msg) {
-  ThreadFuncArgs *args = new ThreadFuncArgs({msg});
-  std::thread t(threadFunc, args);
-  t.join();
-}
-
-void runOnMainThread(std::string msg) { emscripten_run_script(msg.c_str()); }
-
 struct MyThread {
 public:
-  MyThread() : alive(0), runName("") {}
-  void load(std::string url) {
-    ThreadFuncArgs *args = new ThreadFuncArgs({url, this});
-    std::thread t(threadFunc, args);
-    t.detach();
-  }
-  void kill() {
-    EM_ASM(
-        {
-          const thread = Module.MyThread.fromMemAddress($0);
-          Atomics.store(Module.HEAP32, thread.getAliveAddress() / 4, -1);
-          Atomics.notify(Module.HEAP32, thread.getAliveAddress() / 4);
-        },
-        this);
-  }
-  void run(std::string name) {
-    runName = name;
-    EM_ASM(
-        {
-          const thread = Module.MyThread.fromMemAddress($0);
-          Atomics.store(Module.HEAP32, thread.getAliveAddress() / 4, 2);
-          Atomics.notify(Module.HEAP32, thread.getAliveAddress() / 4);
-        },
-        this);
-  }
-  int alive;
+  std::thread thread;
+  MyThread() : request(0), state(0), runName("") {}
+  void load() { thread = std::thread(threadFunc, this); }
+  // request
+  // -1 - kill
+  //  1 - run function
+  int request;
+  // state
+  //  0 - before load
+  //  1 - loaded and ready to handle request / handling request
+  // -1 - killed
+  int state;
   std::string runName;
+  std::string runArg;
+  std::string runRet;
   static MyThread *fromMemAddress(long address) {
     return static_cast<MyThread *>(reinterpret_cast<MyThread *>(address));
   }
+  void detach() { thread.detach(); }
+  void join() { thread.join(); }
 };
 
 EMSCRIPTEN_BINDINGS(OCJS) {
-  function("runInThread", &runInThread);
-  function("runOnMainThread", &runOnMainThread);
+  function("performWork", &performWork);
   class_<MyThread>("MyThread")
       .constructor<>()
+      .function("detach", &MyThread::detach)
+      .function("join", &MyThread::join)
       .function("load", &MyThread::load)
-      .function("run", &MyThread::run)
-      .function("kill", &MyThread::kill)
-      .function("getAliveAddress",
+      .function("getRequestAddress",
                 std::function<long(MyThread &)>([](MyThread &that) -> long {
-                  return reinterpret_cast<long>(&that.alive);
+                  return reinterpret_cast<long>(&that.request);
                 }))
-      .property("alive", &MyThread::alive)
+      .function("getStateAddress",
+                std::function<long(MyThread &)>([](MyThread &that) -> long {
+                  return reinterpret_cast<long>(&that.state);
+                }))
+      .property("request", &MyThread::request)
+      .property("state", &MyThread::state)
       .property("runName", &MyThread::runName)
+      .property("runArg", &MyThread::runArg)
+      .property("runRet", &MyThread::runRet)
       .class_function("fromMemAddress", &MyThread::fromMemAddress,
                       allow_raw_pointers());
 }
