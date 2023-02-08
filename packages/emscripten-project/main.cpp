@@ -21,7 +21,10 @@ struct ThreadFuncArgs {
   MyThread *thread;
 };
 
-void performWork() { int *i = new int; }
+long performWork() {
+  int *i = new int;
+  return reinterpret_cast<long>(i);
+}
 
 EM_JS(void, loadThread, (long threadMemAddress), {
   const thread = Module.MyThread.fromMemAddress(threadMemAddress);

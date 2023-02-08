@@ -20,12 +20,12 @@ const requestThread = (Module, thread, request, runName, runArg) => new Promise(
 init().then(async Module => {
   console.log(performance.now(), "Spawning thread");
 
-  const thread = new Module.MyThread();
-  await loadThread(Module, thread);
+  const threads = Array(5).fill(null).map(() => new Module.MyThread());
+  await Promise.all(threads.map(thread => loadThread(Module, thread)));
   console.log(performance.now(), "done loading");
-  await requestThread(Module, thread, 1, "myThreadFunction", "bla");
-  console.log(performance.now(), "done executing", thread.runRet);
-  await requestThread(Module, thread, -1);
+  await Promise.all(threads.map(thread => requestThread(Module, thread, 1, "myThreadFunction", "bla")));
+  console.log(performance.now(), "done executing", threads[0].runRet, threads[1].runRet);
+  await Promise.all(threads.map(thread => requestThread(Module, thread, -1)));
   console.log(performance.now(), "done killing");
-  thread.join();
+  threads.map(thread => thread.join());
 });
